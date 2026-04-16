@@ -144,6 +144,8 @@ app.listen(config.port, () => {
   console.log(`\n  ╔══════════════════════════════════════════════╗`);
   console.log(`  ║  Test Factory running on http://localhost:${config.port}  ║`);
   console.log(`  ╚══════════════════════════════════════════════╝`);
+  console.log(`  Node.js:        ${process.version}`);
   console.log(`  qTest base URL: ${config.qtest.baseUrl}`);
+  console.log(`  qTest token:    ${config.qtest.bearerToken === 'REPLACE_WITH_YOUR_BEARER_TOKEN' ? '⚠ NOT CONFIGURED' : '✓ configured (' + config.qtest.bearerToken.substring(0, 8) + '...)'}`);
   console.log(`  Frontend:       http://localhost:${config.port}\n`);
 });
