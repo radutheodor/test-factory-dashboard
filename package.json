@@ -1,0 +1,17 @@
+{
+  "name": "test-factory-backend",
+  "version": "1.0.0",
+  "description": "Test Factory backend — proxies API calls to qTest, ServiceNow, SonarQube, ADO",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "nodemon server/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
