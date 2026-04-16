@@ -1,134 +1,107 @@
 # Test Factory — Product Test Maturity & Dashboard
 
+## Quick Start
+
+```bash
+# 1. Extract and install
+tar xzf test-factory-app.tar.gz
+npm install
+
+# 2. Configure qTest credentials — edit server/config.js:
+#    qtest.baseUrl     → your qTest instance URL
+#    qtest.bearerToken → your qTest API bearer token
+
+# 3. Start
+npm start
+
+# 4. Open http://localhost:3000
+```
+
+That's it. The dashboard is served at `http://localhost:3000`.
+
 ## Architecture
 
 ```
-┌─────────────────────────────┐     ┌──────────────────────────────┐
-│   Angular Frontend (:4200)  │────▶│  Express Backend (:3000)     │
-│                             │     │                              │
-│  Dashboard Component        │     │  /api/qtest/executions/:id   │──▶ qTest API
-│  Assessment Component       │     │  /api/servicenow/changes/:ci │──▶ ServiceNow API
-│  History Component          │     │  /api/sonar/metrics/:key     │──▶ SonarQube API
-│                             │     │  /api/ado/pipelines/:proj    │──▶ Azure DevOps API
-└─────────────────────────────┘     └──────────────────────────────┘
+Browser (http://localhost:3000)
+  │
+  ├── GET /                         → Express serves public/index.html (the dashboard)
+  │
+  └── GET /api/qtest/executions/101 → Express backend calls qTest API
+                                       with bearer token (server-side only)
+                                       → filters last 31 days
+                                       → groups by release
+                                       → returns JSON to browser
 ```
 
-**Frontend** (Angular): Responsible for rendering the UI — dashboard, maturity assessment, history.
-Calls the backend for all external data. No API keys or tokens in the browser.
+**Frontend**: `public/index.html` — a single-page HTML/JS app. No build step required.
+Calls `/api/qtest/executions/:projectId` on the same server.
 
-**Backend** (Express/Node.js): Proxies API calls to qTest, ServiceNow, SonarQube, Azure DevOps.
-Holds credentials in server-side config (env vars or config.js). Handles data filtering and aggregation.
+**Backend**: `server/server.js` — Express.js. Serves the frontend and proxies API calls
+to qTest (and in future: ServiceNow, SonarQube, Azure DevOps). Credentials stay server-side.
 
-## Quick Start
+## Configuration
 
-### Backend
+Edit `server/config.js` or use environment variables:
 
 ```bash
-cd project-root
-npm install
-# Configure (option A: env vars)
+# Option A: Environment variables
 export QTEST_BASE_URL=https://your-instance.qtestnet.com
 export QTEST_BEARER_TOKEN=your-token-here
-# Configure (option B: edit server/config.js directly)
 npm start
-# Server runs at http://localhost:3000
+
+# Option B: Edit server/config.js directly
 ```
 
-### Frontend (Angular)
+| Config              | Env Variable         | Default                          |
+|---------------------|----------------------|----------------------------------|
+| `qtest.baseUrl`     | `QTEST_BASE_URL`     | `https://abc.qtestnet.com`       |
+| `qtest.bearerToken` | `QTEST_BEARER_TOKEN` | `REPLACE_WITH_YOUR_BEARER_TOKEN` |
+| `port`              | `PORT`               | `3000`                           |
 
-```bash
-cd project-root
-ng serve
-# App runs at http://localhost:4200, calls backend at http://localhost:3000
-```
-
-### Standalone HTML (no build required)
-
-Open `test-factory-webapp.html` in a browser. Edit `QTEST_CONFIG` at the top of the file.
-Note: The standalone HTML calls qTest directly from the browser (CORS must be allowed).
+When credentials are not configured, the widget shows a helpful message:
+"qTest not configured — Set QTEST_BEARER_TOKEN environment variable or edit server/config.js"
 
 ## Project Structure
 
 ```
-├── server/                          ← Express.js backend
-│   ├── config.js                    ← All credentials and URLs (env vars override)
-│   ├── server.js                    ← Express app with route definitions
-│   └── qtest.service.js             ← qTest API client: fetch, filter, group
-│
-├── src/app/                         ← Angular frontend
-│   └── shared/
-│       ├── config/
-│       │   ├── maturity.config.ts    ← 9 dimensions, 22 questions, weights
-│       │   ├── teams.config.ts       ← Product teams + mock data + qTestProjectId
-│       │   └── roadmap.config.ts     ← Improvement actions per dimension
-│       ├── models/
-│       │   ├── dashboard.model.ts    ← Team, Sonar, CI, Delivery, Coverage interfaces
-│       │   ├── maturity.model.ts     ← Assessment, Dimension, Level interfaces
-│       │   ├── servicenow.model.ts   ← ServiceNow Change Request interface
-│       │   └── qtest.model.ts        ← QTestReleaseExecution, status colours
-│       └── services/
-│           ├── dashboard.service.ts  ← Dashboard data + qTest integration
-│           ├── maturity.service.ts   ← Scoring logic and in-memory storage
-│           └── qtest.service.ts      ← Angular HTTP service → backend
-│
-├── src/environments/
-│   ├── environment.ts               ← Dev: apiBaseUrl = http://localhost:3000
-│   └── environment.prod.ts          ← Prod: apiBaseUrl = /api (same origin)
-│
-├── package.json                     ← Backend dependencies (express, cors)
-├── test-factory-webapp.html         ← Standalone HTML version (no build needed)
-└── README.md
+├── public/
+│   └── index.html                  ← Dashboard app (served by Express at /)
+├── server/
+│   ├── config.js                   ← Credentials + URLs (edit this)
+│   ├── qtest.service.js            ← qTest API: fetch → filter 31 days → group by release
+│   └── server.js                   ← Express: serves frontend + API proxy routes
+├── src/app/shared/                 ← Angular source files (for future Angular build)
+│   ├── config/                     ← Maturity dimensions, teams, roadmap
+│   ├── models/                     ← TypeScript interfaces
+│   └── services/                   ← Angular services (call backend, not qTest)
+├── package.json                    ← npm install / npm start
+└── test-factory-webapp.html        ← Standalone copy of public/index.html
 ```
 
-## qTest Integration
+## qTest Integration Details
 
-### How It Works
-
-1. Angular calls `GET http://localhost:3000/api/qtest/executions/{projectId}`
-2. Backend calls qTest: `GET {baseUrl}/api/v3/projects/{projectId}/test-runs?parentId=0&parentType=root&expand=descendants`
-3. Backend filters test runs to last 31 days via `last_modified_date`
-4. Backend parses `properties[]` array on each test run:
-   - Finds `field_name === "Target Release/Build"` → gets `field_value_name` (release name)
-   - Finds `field_name === "Status"` → gets `field_value_name` (Passed/Failed/Blocked/Incomplete/Unexecuted)
-5. Backend groups by release name, tallies statuses, returns aggregated JSON
-6. Angular renders execution bars in the "Test Executions in the Last Month" widget
-
-### Response Format
-
-```json
-{
-  "portalUrl": "https://abc.qtestnet.com/p/101/portal/project#tab=testexecution",
-  "releases": [
-    {
-      "releaseName": "Release 3.2",
-      "passed": 198,
-      "failed": 12,
-      "blocked": 5,
-      "incomplete": 3,
-      "unexecuted": 30,
-      "total": 248
-    }
-  ]
-}
+**API endpoint called by backend:**
+```
+GET {baseUrl}/api/v3/projects/{projectId}/test-runs?parentId=0&parentType=root&expand=descendants
 ```
 
-### Status Colours
+**Processing:**
+1. Filter items where `last_modified_date` is within last 31 days
+2. For each test run, parse `properties[]` array:
+   - Find `field_name === "Target Release/Build"` → `field_value_name` = release name
+   - Find `field_name === "Status"` → `field_value_name` = Passed/Failed/Blocked/Incomplete/Unexecuted
+3. Group by release name, tally statuses
+4. Return to frontend as `{ portalUrl, releases: [...] }`
 
-| Status      | Colour       | Hex       |
-|-------------|-------------|-----------|
-| Passed      | Green       | `#10B981` |
-| Failed      | Red         | `#EF4444` |
-| Blocked     | Dark Orange | `#D4890B` |
-| Incomplete  | Yellow      | `#F59E0B` |
-| Unexecuted  | Silver      | `#D9D9D9` |
+**Portal link:** `{baseUrl}/p/{projectId}/portal/project#tab=testexecution`
 
-## Configuration Reference
+## Angular Source Files
 
-All config lives in `server/config.js` and can be overridden with environment variables:
+The `src/app/shared/` directory contains TypeScript source files structured for Angular:
 
-| Config Key          | Env Variable          | Default                          |
-|---------------------|-----------------------|----------------------------------|
-| `qtest.baseUrl`     | `QTEST_BASE_URL`      | `https://abc.qtestnet.com`       |
-| `qtest.bearerToken` | `QTEST_BEARER_TOKEN`  | `REPLACE_WITH_YOUR_BEARER_TOKEN` |
-| `port`              | `PORT`                | `3000`                           |
-| `cors.origin`       | `CORS_ORIGIN`         | `http://localhost:4200`          |
+- `services/qtest.service.ts` — calls `GET {apiBaseUrl}/api/qtest/executions/{projectId}` (the backend, not qTest directly)
+- `services/dashboard.service.ts` — aggregates data from all sources
+- `models/qtest.model.ts` — `QTestReleaseExecution` interface + status colours
+- `environments/environment.ts` — `apiBaseUrl: 'http://localhost:3000'`
+
+To use with Angular: scaffold a workspace (`ng new test-factory`), copy `src/` into it, and the services will call the same Express backend.

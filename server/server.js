@@ -61,6 +61,26 @@ app.get('/api/health', (req, res) => {
 app.get('/api/qtest/executions/:projectId', async (req, res) => {
   try {
     const { projectId } = req.params;
+
+    // Check if qTest is configured
+    if (!config.qtest.bearerToken || config.qtest.bearerToken === 'REPLACE_WITH_YOUR_BEARER_TOKEN') {
+      return res.status(503).json({
+        error: 'qTest not configured',
+        details: 'Set QTEST_BEARER_TOKEN environment variable or edit server/config.js',
+        portalUrl: qtestService.getPortalUrl(projectId),
+        releases: [],
+      });
+    }
+
+    if (!config.qtest.baseUrl || config.qtest.baseUrl === 'https://abc.qtestnet.com') {
+      return res.status(503).json({
+        error: 'qTest not configured',
+        details: 'Set QTEST_BASE_URL environment variable or edit server/config.js',
+        portalUrl: qtestService.getPortalUrl(projectId),
+        releases: [],
+      });
+    }
+
     const releases = await qtestService.getRecentTestExecutions(projectId);
     const portalUrl = qtestService.getPortalUrl(projectId);
 
@@ -70,6 +90,9 @@ app.get('/api/qtest/executions/:projectId', async (req, res) => {
     res.status(502).json({
       error: 'Failed to fetch data from qTest',
       details: err.message,
+      portalUrl: qtestService.getPortalUrl(req.params.projectId),
+      releases: [],
+    });
     });
   }
 });
