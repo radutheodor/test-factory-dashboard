@@ -587,12 +587,23 @@ const QUESTIONS = [
 ];
 
 // ── PRODUCT TEAMS ──
-const TEAMS = [
-  { id:'order-mgmt', name:'Order Management', desc:'Core order processing & fulfilment', lead:'Alice Chen', sonarUrl:'https://sonar.company.com/dashboard?id=com.company:order-mgmt', adoUrl:'https://dev.azure.com/company/OrderMgmt/_build', snowUrl:'https://company.service-now.com/nav_to.do?uri=change_request_list.do?sysparm_query=cmdb_ci=order-mgmt', qTestProjectId: 101 },
-  { id:'payment-gateway', name:'Payment Gateway', desc:'Payment processing & fraud detection', lead:'Bob Martinez', sonarUrl:'https://sonar.company.com/dashboard?id=com.company:payment-gw', adoUrl:'https://dev.azure.com/company/PaymentGW/_build', snowUrl:'https://company.service-now.com/nav_to.do?uri=change_request_list.do?sysparm_query=cmdb_ci=payment-gw', qTestProjectId: 102 },
-  { id:'inventory-svc', name:'Inventory Service', desc:'Stock management & availability', lead:'Carol Wu', sonarUrl:'https://sonar.company.com/dashboard?id=com.company:inventory-svc', adoUrl:'https://dev.azure.com/company/InventorySvc/_build', snowUrl:'https://company.service-now.com/nav_to.do?uri=change_request_list.do?sysparm_query=cmdb_ci=inventory-svc', qTestProjectId: 103 },
-  { id:'customer-portal', name:'Customer Portal', desc:'Self-service customer account management', lead:'David Kim', sonarUrl:'https://sonar.company.com/dashboard?id=com.company:customer-portal', adoUrl:'https://dev.azure.com/company/CustomerPortal/_build', snowUrl:'https://company.service-now.com/nav_to.do?uri=change_request_list.do?sysparm_query=cmdb_ci=customer-portal', qTestProjectId: 104 },
-];
+// Teams are loaded dynamically from the backend at startup.
+// Single source of truth: server/config/teams.config.js
+let TEAMS = [];
+
+async function loadTeamsFromBackend() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/teams`);
+    if (!response.ok) throw new Error(`Backend returned ${response.status}`);
+    const data = await response.json();
+    TEAMS = data.teams || [];
+    console.log(`Loaded ${TEAMS.length} teams from backend`);
+    return true;
+  } catch (err) {
+    console.error('Failed to load teams from backend:', err);
+    return false;
+  }
+}
 
 // ── BACKEND API CONFIGURATION ──
 // When served by the Express backend (npm start), API calls go to the same origin.
@@ -1136,7 +1147,6 @@ function loadDashboard() {
   // Fetch qTest data asynchronously and render when ready
   const qTestProjectId = team.qTestProjectId;
   const qTestPortalUrl = `${API_BASE_URL}/api/health`; // placeholder, real URL comes from backend response
-  const req = MOCK.reqCoverage[teamId];
   const maturity = storedResults.filter(r => r.team === team.name).sort((a,b) => new Date(b.date) - new Date(a.date))[0];
 
   const gateColor = sonar.gate === 'OK' ? 'var(--success)' : sonar.gate === 'WARN' ? 'var(--warning)' : 'var(--danger)';
@@ -1158,7 +1168,7 @@ function loadDashboard() {
       <div class="card-body flex-between">
         <div>
           <h3 style="font-family:Georgia,serif;font-size:20px;color:var(--navy)">${team.name}</h3>
-          <p style="font-size:13px;color:var(--text-muted)">${team.desc} · Tech Lead: ${team.lead}</p>
+          <p style="font-size:13px;color:var(--text-muted)">${team.description} · Tech Lead: ${team.techLead}</p>
         </div>
         ${maturity ? `
           <div style="text-align:center">
@@ -1369,16 +1379,10 @@ function loadDashboard() {
           <span class="material-icons-outlined">library_books</span>
           <h3>Requirement Coverage</h3>
         </div>
-        <div class="card-body req-summary">
-          <div class="req-big" style="color:${req.pct >= 75 ? 'var(--success)' : req.pct >= 50 ? 'var(--warning)' : 'var(--danger)'}">${req.pct}%</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Requirement Coverage</div>
-          <div class="progress-bar mt-2" style="max-width:300px;margin:12px auto">
-            <div class="progress-fill" style="width:${req.pct}%;background:${req.pct >= 75 ? 'var(--success)' : req.pct >= 50 ? 'var(--warning)' : 'var(--danger)'}"></div>
-          </div>
-          <div class="req-detail">
-            <strong>${req.total}</strong> total requirements<br>
-            <span style="color:var(--success)"><strong>${req.covered}</strong> covered</span> by <strong>${req.tests}</strong> test cases<br>
-            <span style="color:var(--danger)"><strong>${req.uncovered}</strong> uncovered</span> requirements
+        <div class="card-body" id="reqcov-widget-${teamId}">
+          <div style="text-align:center;padding:20px;color:var(--text-muted)">
+            <span class="material-icons-outlined" style="font-size:24px;display:block;margin-bottom:8px;opacity:0.4;animation:spin 1s linear infinite">autorenew</span>
+            Loading requirements coverage...
           </div>
         </div>
       </div>
@@ -1387,6 +1391,7 @@ function loadDashboard() {
 
   // Async: Fetch and render qTest data after dashboard HTML is in place
   loadQTestWidget(teamId, qTestProjectId);
+  loadRequirementsCoverageWidget(teamId, qTestProjectId);
 }
 
 async function loadQTestWidget(teamId, projectId) {
@@ -1477,6 +1482,69 @@ async function loadQTestWidget(teamId, projectId) {
       </div>
     `;
   }).join('');
+}
+
+async function loadRequirementsCoverageWidget(teamId, projectId) {
+  const container = document.getElementById(`reqcov-widget-${teamId}`);
+  if (!container) return;
+
+  let result;
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/qtest/requirements-coverage/${projectId}`);
+    result = await response.json();
+  } catch (err) {
+    console.error('Backend API error (requirements coverage):', err);
+    container.innerHTML = `
+      <div style="text-align:center;padding:20px;color:var(--warning)">
+        <span class="material-icons-outlined" style="font-size:28px;display:block;margin-bottom:8px;opacity:0.5">cloud_off</span>
+        <div style="font-size:13px;font-weight:500">Cannot reach the backend</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Ensure the server is running: <code>npm start</code></div>
+      </div>
+    `;
+    return;
+  }
+
+  // Backend returned an error (not configured, or qTest returned 401)
+  if (result.error) {
+    container.innerHTML = `
+      <div style="text-align:center;padding:20px;color:var(--warning)">
+        <span class="material-icons-outlined" style="font-size:28px;display:block;margin-bottom:8px;opacity:0.5">settings</span>
+        <div style="font-size:13px;font-weight:500">${result.error}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px;max-width:350px;margin-left:auto;margin-right:auto">${result.details || ''}</div>
+      </div>
+    `;
+    return;
+  }
+
+  // No Traceability Matrix folder at the root
+  if (!result.found) {
+    container.innerHTML = `
+      <div style="text-align:center;padding:28px;color:var(--text-muted)">
+        <span class="material-icons-outlined" style="font-size:36px;display:block;margin-bottom:10px;opacity:0.3">folder_off</span>
+        <div style="font-size:14px;font-weight:500;color:var(--navy)">Found no Traceability Matrix Folder at the root of Requirements</div>
+        <div style="font-size:12px;margin-top:6px;color:var(--taupe)">This project has no folder named "Traceability Matrix" at the root of its Requirements.</div>
+      </div>
+    `;
+    return;
+  }
+
+  // Render the coverage stats
+  const pct = result.coveragePercentage;
+  const color = pct >= 75 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)';
+
+  container.className = 'card-body req-summary';
+  container.innerHTML = `
+    <div class="req-big" style="color:${color}">${pct}%</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Requirement Coverage</div>
+    <div class="progress-bar mt-2" style="max-width:300px;margin:12px auto">
+      <div class="progress-fill" style="width:${pct}%;background:${color}"></div>
+    </div>
+    <div class="req-detail">
+      <strong>${result.totalRequirements}</strong> total requirements<br>
+      <span style="color:var(--success)"><strong>${result.coveredRequirements}</strong> covered</span> by <strong>${result.totalTestsCovering}</strong> test cases<br>
+      <span style="color:var(--danger)"><strong>${result.uncoveredRequirements}</strong> uncovered</span> requirements
+    </div>
+  `;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1580,8 +1648,24 @@ function renderHistory() {
 // ════════════════════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════════════════════
-initAssessmentSelector();
-initDashboardSelector();
+(async function init() {
+  const loaded = await loadTeamsFromBackend();
+  if (!loaded) {
+    // Backend unreachable — show a blocking error message
+    document.body.innerHTML = `
+      <div style="max-width:600px;margin:80px auto;padding:40px;background:#fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.08);text-align:center;font-family:'Roboto',sans-serif">
+        <h2 style="color:#960021;font-family:Georgia,serif">⚠ Backend Not Available</h2>
+        <p style="color:#666">Could not connect to the backend at <code>${API_BASE_URL}</code>.</p>
+        <p style="color:#666;margin-top:20px">Ensure the server is running:</p>
+        <pre style="background:#f5f2ef;padding:16px;border-radius:8px;text-align:left;font-size:13px">npm install
+npm start</pre>
+      </div>
+    `;
+    return;
+  }
+  initAssessmentSelector();
+  initDashboardSelector();
+})();
 </script>
 </body>
 </html>

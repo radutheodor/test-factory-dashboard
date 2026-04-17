@@ -1,24 +1,13 @@
 // ════════════════════════════════════════════════════════════════
 // Test Factory — Backend Server
 // ════════════════════════════════════════════════════════════════
-// Express.js backend that proxies API calls to external services
-// (qTest, ServiceNow, SonarQube, Azure DevOps) and keeps
-// credentials server-side. The Angular frontend calls these
-// endpoints instead of the external APIs directly.
-//
-// Usage:
-//   node server/server.js
-//   # or with env vars:
-//   QTEST_BASE_URL=https://myinstance.qtestnet.com \
-//   QTEST_BEARER_TOKEN=abc123 \
-//   node server/server.js
-// ════════════════════════════════════════════════════════════════
 
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const config = require('./config');
 const qtestService = require('./qtest.service');
+const { PRODUCT_TEAMS } = require('./config/teams.config');
 
 const app = express();
 
@@ -27,7 +16,6 @@ app.use(cors({ origin: config.cors.origin }));
 app.use(express.json());
 
 // ── SERVE FRONTEND ──
-// Serves test-factory-webapp.html at the root URL
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
@@ -39,105 +27,105 @@ app.get('/api/health', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════
-// qTest ENDPOINTS
+// TEAMS ENDPOINT
 // ════════════════════════════════════════════════════════════════
 
 /**
+ * GET /api/teams
+ * Returns the full list of product teams from the central config.
+ * This is the single source of truth for the frontend.
+ */
+app.get('/api/teams', (req, res) => {
+  res.json({ teams: PRODUCT_TEAMS });
+});
+
+// ════════════════════════════════════════════════════════════════
+// qTest ENDPOINTS
+// ════════════════════════════════════════════════════════════════
+
+// Small helper: is qTest configured?
+function isQTestConfigured() {
+  return config.qtest.bearerToken &&
+         config.qtest.bearerToken !== 'REPLACE_WITH_YOUR_BEARER_TOKEN' &&
+         config.qtest.baseUrl &&
+         config.qtest.baseUrl !== 'https://abc.qtestnet.com';
+}
+
+/**
  * GET /api/qtest/executions/:projectId
- *
- * Returns test executions from the last 31 days, grouped by release.
- *
- * Response:
- * {
- *   portalUrl: "https://abc.qtestnet.com/p/101/portal/project#tab=testexecution",
- *   releases: [
- *     {
- *       releaseName: "Release 3.2",
- *       passed: 198, failed: 12, blocked: 5, incomplete: 3, unexecuted: 30, total: 248
- *     }
- *   ]
- * }
+ * Paginated Test Runs, filtered to last 31 days, grouped by release.
  */
 app.get('/api/qtest/executions/:projectId', async (req, res) => {
+  const { projectId } = req.params;
+  const portalUrl = qtestService.getPortalUrl(projectId);
+
+  if (!isQTestConfigured()) {
+    return res.status(503).json({
+      error: 'qTest not configured',
+      details: 'Set QTEST_BASE_URL and QTEST_BEARER_TOKEN environment variables, or edit server/config.js',
+      portalUrl,
+      releases: [],
+    });
+  }
+
   try {
-    const { projectId } = req.params;
-
-    // Check if qTest is configured
-    if (!config.qtest.bearerToken || config.qtest.bearerToken === 'REPLACE_WITH_YOUR_BEARER_TOKEN') {
-      return res.status(503).json({
-        error: 'qTest not configured',
-        details: 'Set QTEST_BEARER_TOKEN environment variable or edit server/config.js',
-        portalUrl: qtestService.getPortalUrl(projectId),
-        releases: [],
-      });
-    }
-
-    if (!config.qtest.baseUrl || config.qtest.baseUrl === 'https://abc.qtestnet.com') {
-      return res.status(503).json({
-        error: 'qTest not configured',
-        details: 'Set QTEST_BASE_URL environment variable or edit server/config.js',
-        portalUrl: qtestService.getPortalUrl(projectId),
-        releases: [],
-      });
-    }
-
     const releases = await qtestService.getRecentTestExecutions(projectId);
-    const portalUrl = qtestService.getPortalUrl(projectId);
-
     res.json({ portalUrl, releases });
   } catch (err) {
-    console.error(`[qTest] Error fetching executions for project ${req.params.projectId}:`, err.message);
+    console.error(`[qTest] Error fetching executions for project ${projectId}:`, err.message);
     res.status(502).json({
       error: 'Failed to fetch data from qTest',
       details: err.message,
-      portalUrl: qtestService.getPortalUrl(req.params.projectId),
+      portalUrl,
       releases: [],
     });
+  }
+});
+
+/**
+ * GET /api/qtest/requirements-coverage/:projectId
+ * Parses the "Traceability Matrix" folder recursively and returns aggregated coverage stats.
+ */
+app.get('/api/qtest/requirements-coverage/:projectId', async (req, res) => {
+  const { projectId } = req.params;
+
+  if (!isQTestConfigured()) {
+    return res.status(503).json({
+      error: 'qTest not configured',
+      details: 'Set QTEST_BASE_URL and QTEST_BEARER_TOKEN environment variables, or edit server/config.js',
+      found: false,
+      totalRequirements: 0,
+      coveredRequirements: 0,
+      uncoveredRequirements: 0,
+      totalTestsCovering: 0,
+      coveragePercentage: 0,
+    });
+  }
+
+  try {
+    const coverage = await qtestService.getRequirementsCoverage(projectId);
+    res.json(coverage);
+  } catch (err) {
+    console.error(`[qTest] Error fetching requirements coverage for project ${projectId}:`, err.message);
+    res.status(502).json({
+      error: 'Failed to fetch requirements coverage from qTest',
+      details: err.message,
+      found: false,
+      totalRequirements: 0,
+      coveredRequirements: 0,
+      uncoveredRequirements: 0,
+      totalTestsCovering: 0,
+      coveragePercentage: 0,
     });
   }
 });
 
 // ════════════════════════════════════════════════════════════════
-// ServiceNow ENDPOINTS (future)
+// FUTURE ENDPOINTS (stubs)
 // ════════════════════════════════════════════════════════════════
-
-/**
- * GET /api/servicenow/changes/:ciName
- *
- * Returns recent change requests for a given CI name.
- * TODO: Implement when ServiceNow integration is ready.
- */
-app.get('/api/servicenow/changes/:ciName', (req, res) => {
-  res.status(501).json({ error: 'ServiceNow integration not yet implemented' });
-});
-
-// ════════════════════════════════════════════════════════════════
-// SonarQube ENDPOINTS (future)
-// ════════════════════════════════════════════════════════════════
-
-/**
- * GET /api/sonar/metrics/:projectKey
- *
- * Returns SonarQube metrics for a given project.
- * TODO: Implement when SonarQube integration is ready.
- */
-app.get('/api/sonar/metrics/:projectKey', (req, res) => {
-  res.status(501).json({ error: 'SonarQube integration not yet implemented' });
-});
-
-// ════════════════════════════════════════════════════════════════
-// Azure DevOps ENDPOINTS (future)
-// ════════════════════════════════════════════════════════════════
-
-/**
- * GET /api/ado/pipelines/:project
- *
- * Returns recent pipeline runs for a given ADO project.
- * TODO: Implement when ADO integration is ready.
- */
-app.get('/api/ado/pipelines/:project', (req, res) => {
-  res.status(501).json({ error: 'Azure DevOps integration not yet implemented' });
-});
+app.get('/api/servicenow/changes/:ciName', (req, res) => res.status(501).json({ error: 'Not yet implemented' }));
+app.get('/api/sonar/metrics/:projectKey',  (req, res) => res.status(501).json({ error: 'Not yet implemented' }));
+app.get('/api/ado/pipelines/:project',     (req, res) => res.status(501).json({ error: 'Not yet implemented' }));
 
 // ── START SERVER ──
 app.listen(config.port, () => {
@@ -146,6 +134,7 @@ app.listen(config.port, () => {
   console.log(`  ╚══════════════════════════════════════════════╝`);
   console.log(`  Node.js:        ${process.version}`);
   console.log(`  qTest base URL: ${config.qtest.baseUrl}`);
-  console.log(`  qTest token:    ${config.qtest.bearerToken === 'REPLACE_WITH_YOUR_BEARER_TOKEN' ? '⚠ NOT CONFIGURED' : '✓ configured (' + config.qtest.bearerToken.substring(0, 8) + '...)'}`);
+  console.log(`  qTest token:    ${isQTestConfigured() ? '✓ configured (' + config.qtest.bearerToken.substring(0, 8) + '...)' : '⚠ NOT CONFIGURED'}`);
+  console.log(`  Teams loaded:   ${PRODUCT_TEAMS.length} (from server/config/teams.config.js)`);
   console.log(`  Frontend:       http://localhost:${config.port}\n`);
 });
