@@ -1,96 +1,112 @@
 // ════════════════════════════════════════════════════════════════
 // qTest Service (Backend)
 // ════════════════════════════════════════════════════════════════
-// Uses Node.js built-in https/http modules — no external deps.
+// Uses axios for HTTP calls, with PARALLEL pagination:
+//   1. Fetch page 1 synchronously
+//   2. If the response includes `total`, calculate remaining pages
+//      and fetch them all in parallel (Promise.all)
+//   3. If `total` is missing, fall back to sequential pagination
+//      (loop until a page returns < pageSize items)
 //
-// Provides:
-//   - getRecentTestExecutions(projectId): paginated Test Runs, filtered
-//     to last 31 days, grouped by Target Release/Build
-//   - getRequirementsCoverage(projectId): recursive walk of the
-//     Traceability Matrix folder, sums requirements + test coverage
+// This reduces end-to-end time from ~N × latency (sequential)
+// to ~1 × latency (parallel) for the common case.
 // ════════════════════════════════════════════════════════════════
 
-const https = require('https');
-const http = require('http');
-const { URL } = require('url');
+const axios = require('axios');
 const config = require('./config');
 
 const PAGE_SIZE = 999;
+const PARALLEL_LIMIT = 10; // cap concurrent in-flight requests
+
+// Configured axios instance — reuses TCP connections (keep-alive)
+// and sets sensible defaults once
+const http = require('http');
+const https = require('https');
+
+const qtestClient = axios.create({
+  timeout: 30000,
+  headers: {
+    'Authorization': `Bearer ${config.qtest.bearerToken}`,
+    'Content-Type': 'application/json',
+  },
+  // Keep-alive agents: reuse connections across page fetches
+  httpAgent: new http.Agent({ keepAlive: true, maxSockets: 20 }),
+  httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 20 }),
+});
 
 // ────────────────────────────────────────────────────────────────
-// HTTP helper (promise-based GET)
+// Helper: fetch a single page
 // ────────────────────────────────────────────────────────────────
-function httpGet(urlString, headers) {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(urlString);
-    const client = parsed.protocol === 'https:' ? https : http;
-
-    const options = {
-      hostname: parsed.hostname,
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      path: parsed.pathname + parsed.search,
-      method: 'GET',
-      headers: headers || {},
-    };
-
-    const req = client.request(options, (res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          try {
-            resolve(JSON.parse(body));
-          } catch (e) {
-            reject(new Error(`Failed to parse qTest response as JSON: ${body.substring(0, 200)}`));
-          }
-        } else {
-          reject(new Error(`qTest API returned HTTP ${res.statusCode}: ${body.substring(0, 300)}`));
-        }
-      });
-    });
-
-    req.on('error', (err) => reject(new Error(`Network error calling qTest: ${err.message}`)));
-    req.setTimeout(30000, () => {
-      req.destroy();
-      reject(new Error('qTest API request timed out after 30 seconds'));
-    });
-    req.end();
-  });
+async function fetchPage(buildUrl, page) {
+  const url = buildUrl(page, PAGE_SIZE);
+  const t0 = Date.now();
+  const { data } = await qtestClient.get(url);
+  const elapsed = Date.now() - t0;
+  const items = Array.isArray(data) ? data : (data.items || []);
+  console.log(`[qTest]   page ${page}: ${items.length} items in ${elapsed}ms${data.total !== undefined ? ` (total=${data.total})` : ''}`);
+  return { items, total: data.total, pageSize: data.page_size };
 }
 
 // ────────────────────────────────────────────────────────────────
-// Generic paginated fetch — follows pages until one returns fewer
-// items than pageSize. Works for any qTest endpoint with page/pageSize
-// pagination, regardless of whether the response includes `total`.
+// Helper: run promises in parallel with a concurrency limit
 // ────────────────────────────────────────────────────────────────
-async function fetchAllPages(buildUrl, headers, endpointLabel) {
-  const allItems = [];
-  let page = 1;
+async function parallelLimit(tasks, limit) {
+  const results = new Array(tasks.length);
+  let nextIndex = 0;
 
-  while (true) {
-    const url = buildUrl(page, PAGE_SIZE);
-    console.log(`[qTest] GET ${endpointLabel} page=${page} pageSize=${PAGE_SIZE}`);
-
-    const data = await httpGet(url, headers);
-    const items = Array.isArray(data) ? data : (data.items || []);
-
-    console.log(`[qTest]   → received ${items.length} items${data.total !== undefined ? ` (total=${data.total})` : ''}`);
-    allItems.push(...items);
-
-    // Stop when a page returns fewer items than pageSize — that's the last page.
-    // Generic: works even when the response has no `total` field.
-    if (items.length < PAGE_SIZE) break;
-
-    page++;
-
-    // Safety cap to prevent runaway loops (≈ 1M items)
-    if (page > 1000) {
-      console.warn(`[qTest] Pagination safety cap reached at page ${page}, stopping`);
-      break;
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const i = nextIndex++;
+      results[i] = await tasks[i]();
     }
   }
 
-  console.log(`[qTest] Fetched ${allItems.length} total items from ${endpointLabel} across ${page} page(s)`);
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+// ────────────────────────────────────────────────────────────────
+// Generic paginated fetch — PARALLEL when total is known,
+// sequential fallback otherwise.
+// ────────────────────────────────────────────────────────────────
+async function fetchAllPages(buildUrl, endpointLabel) {
+  console.log(`[qTest] Fetching all pages for ${endpointLabel}`);
+  const t0 = Date.now();
+
+  // Always fetch page 1 first to discover total
+  const first = await fetchPage(buildUrl, 1);
+  const allItems = [...first.items];
+
+  // Case 1: total known and there are more pages → PARALLEL
+  if (typeof first.total === 'number' && first.total > PAGE_SIZE) {
+    const totalPages = Math.ceil(first.total / PAGE_SIZE);
+    console.log(`[qTest]   → ${first.total} total items, ${totalPages} pages — fetching pages 2-${totalPages} in parallel (limit=${PARALLEL_LIMIT})`);
+
+    const tasks = [];
+    for (let page = 2; page <= totalPages; page++) {
+      const p = page;
+      tasks.push(() => fetchPage(buildUrl, p));
+    }
+
+    const pageResults = await parallelLimit(tasks, PARALLEL_LIMIT);
+    pageResults.forEach(r => allItems.push(...r.items));
+  }
+  // Case 2: no total → sequential fallback (stop when a page < pageSize)
+  else if (first.items.length === PAGE_SIZE) {
+    console.log(`[qTest]   → no "total" in response, falling back to sequential pagination`);
+    let page = 2;
+    while (true) {
+      const r = await fetchPage(buildUrl, page);
+      allItems.push(...r.items);
+      if (r.items.length < PAGE_SIZE) break;
+      page++;
+      if (page > 1000) { console.warn('[qTest] Safety cap at page 1000'); break; }
+    }
+  }
+
+  const elapsed = Date.now() - t0;
+  console.log(`[qTest] Fetched ${allItems.length} items from ${endpointLabel} in ${elapsed}ms`);
   return allItems;
 }
 
@@ -98,19 +114,11 @@ async function fetchAllPages(buildUrl, headers, endpointLabel) {
 // TEST EXECUTIONS — Last 31 days, grouped by Release
 // ────────────────────────────────────────────────────────────────
 async function getRecentTestExecutions(projectId) {
-  const headers = {
-    'Authorization': `Bearer ${config.qtest.bearerToken}`,
-    'Content-Type': 'application/json',
-  };
-
-  // Fetch all pages of test runs
   const allRuns = await fetchAllPages(
     (page, size) => `${config.qtest.baseUrl}/api/v3/projects/${projectId}/test-runs?parentId=0&parentType=root&expand=descendants&page=${page}&pageSize=${size}`,
-    headers,
     `test-runs (project ${projectId})`
   );
 
-  // Filter to last 31 days
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 31);
 
@@ -120,7 +128,6 @@ async function getRecentTestExecutions(projectId) {
   });
   console.log(`[qTest] ${recentRuns.length} of ${allRuns.length} test runs are within the last 31 days`);
 
-  // Group by Target Release/Build and tally statuses
   const releaseMap = {};
 
   recentRuns.forEach(run => {
@@ -160,27 +167,12 @@ async function getRecentTestExecutions(projectId) {
 // REQUIREMENTS COVERAGE — Recursive walk of Traceability Matrix
 // ────────────────────────────────────────────────────────────────
 
-/**
- * Recursively walks a folder/requirements node tree and accumulates stats.
- *
- * Node shape (flexible):
- *   { id, name, requirements: [...], children: [...] }
- *
- * Requirement entry shape:
- *   { id, name }                                    ← uncovered (no test cases)
- *   { id, name, testcases, 'linked-testcases': N }  ← covered by N test cases
- *
- * @param node - Current folder node to process
- * @param stats - Accumulator object { total, covered, uncovered, testCases }
- */
 function walkRequirements(node, stats) {
   if (!node || typeof node !== 'object') return;
 
-  // Process requirements in this node
   const reqs = node.requirements || [];
   reqs.forEach(req => {
     stats.total++;
-    // "linked-testcases" (hyphenated) = number of test cases covering this requirement
     const linked = req['linked-testcases'];
     if (typeof linked === 'number' && linked > 0) {
       stats.covered++;
@@ -190,25 +182,16 @@ function walkRequirements(node, stats) {
     }
   });
 
-  // Recurse into children (sub-folders)
   const children = node.children || [];
   children.forEach(child => walkRequirements(child, stats));
 }
 
 async function getRequirementsCoverage(projectId) {
-  const headers = {
-    'Authorization': `Bearer ${config.qtest.bearerToken}`,
-    'Content-Type': 'application/json',
-  };
-
-  // Fetch all pages of the trace matrix report (note: uses "size" not "pageSize")
   const allRoots = await fetchAllPages(
     (page, size) => `${config.qtest.baseUrl}/api/v3/projects/${projectId}/requirements/trace-matrix-report?page=${page}&size=${size}&expand=descendants`,
-    headers,
     `trace-matrix-report (project ${projectId})`
   );
 
-  // Find the root entry whose name contains "Traceability Matrix"
   const matrixRoot = allRoots.find(root =>
     root && root.name && root.name.includes('Traceability Matrix')
   );
@@ -217,15 +200,11 @@ async function getRequirementsCoverage(projectId) {
     console.log(`[qTest] No "Traceability Matrix" folder found at root for project ${projectId}`);
     return {
       found: false,
-      totalRequirements: 0,
-      coveredRequirements: 0,
-      uncoveredRequirements: 0,
-      totalTestsCovering: 0,
-      coveragePercentage: 0,
+      totalRequirements: 0, coveredRequirements: 0, uncoveredRequirements: 0,
+      totalTestsCovering: 0, coveragePercentage: 0,
     };
   }
 
-  // Walk the matrix recursively
   const stats = { total: 0, covered: 0, uncovered: 0, testCases: 0 };
   walkRequirements(matrixRoot, stats);
 
@@ -243,9 +222,6 @@ async function getRequirementsCoverage(projectId) {
   };
 }
 
-// ────────────────────────────────────────────────────────────────
-// Portal URL helper
-// ────────────────────────────────────────────────────────────────
 function getPortalUrl(projectId) {
   return `${config.qtest.baseUrl}/p/${projectId}/portal/project#tab=testexecution`;
 }
