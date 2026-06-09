@@ -2,16 +2,13 @@
 // Product Teams Configuration
 // ════════════════════════════════════════════════════════════════
 // SINGLE SOURCE OF TRUTH for all product team metadata.
-// - The backend reads this via require()
-// - The frontend fetches this via GET /api/teams
-//
-// To add/remove/edit teams, change only this file.
-// Do NOT duplicate team data in the frontend.
+// - Backend reads this via require()
+// - Frontend fetches via GET /api/teams
 // ════════════════════════════════════════════════════════════════
 
 const PRODUCT_TEAMS = [
   {
-    id: 'order-mgmt',
+    id: 1,
     name: 'Order Management',
     description: 'Core order processing & fulfilment',
     techLead: 'Alice Chen',
@@ -21,7 +18,7 @@ const PRODUCT_TEAMS = [
     qTestProjectId: 101,
   },
   {
-    id: 'payment-gateway',
+    id: 2,
     name: 'Payment Gateway',
     description: 'Payment processing & fraud detection',
     techLead: 'Bob Martinez',
@@ -31,7 +28,7 @@ const PRODUCT_TEAMS = [
     qTestProjectId: 102,
   },
   {
-    id: 'inventory-svc',
+    id: 3,
     name: 'Inventory Service',
     description: 'Stock management & availability',
     techLead: 'Carol Wu',
@@ -41,7 +38,7 @@ const PRODUCT_TEAMS = [
     qTestProjectId: 103,
   },
   {
-    id: 'customer-portal',
+    id: 4,
     name: 'Customer Portal',
     description: 'Self-service customer account management',
     techLead: 'David Kim',

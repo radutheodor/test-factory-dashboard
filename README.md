@@ -14,116 +14,77 @@ npm start
 
 ```
 Browser (http://localhost:3000)
-   │
-   ├── GET /                                    → Express serves public/index.html
-   ├── GET /api/teams                           → Product teams from server/config/teams.config.js
-   ├── GET /api/qtest/executions/:projectId     → Paginated test runs, grouped by release
-   └── GET /api/qtest/requirements-coverage/:id → Traceability Matrix coverage stats
+  │
+  ├── GET /                                    → public/index.html
+  ├── GET /api/teams                           → Product teams config (numeric IDs)
+  ├── GET /api/maturity-config                 → Dimensions, levels, questions
+  ├── GET /api/roadmap-config                  → Improvement actions per dimension
+  │
+  ├── GET  /api/assessments                    → List all stored assessments
+  ├── GET  /api/assessments/:id                → Single assessment
+  ├── GET  /api/assessments/latest/:teamId     → Latest for a team (used for retake pre-fill)
+  ├── POST /api/assessments                    → Save a new assessment
+  │
+  ├── GET /api/qtest/executions/:projectId     → Paginated test runs, grouped by release
+  └── GET /api/qtest/requirements-coverage/:id → Traceability Matrix coverage
                                                        │
-                                                       └─→ qTest API (bearer token server-side)
+                                                       └─→ qTest API (token server-side)
 ```
-
-**Frontend** (`public/index.html`) is a pure rendering layer. It holds no configuration.
-On load it fetches teams from `/api/teams`; on team selection it fetches qTest data.
-
-**Backend** (`server/`) holds all configuration and credentials, proxies API calls to qTest.
 
 ## Project Structure
 
 ```
 ├── public/
-│   └── index.html                    ← Dashboard (served by Express at /)
+│   ├── index.html                ← Dashboard markup + JS (no inline config)
+│   └── css/styles.css            ← Extracted CSS (no framework, just CSS variables)
 ├── server/
-│   ├── config.js                     ← Backend credentials (env vars override)
+│   ├── config.js                 ← Backend credentials (env vars override)
 │   ├── config/
-│   │   └── teams.config.js           ← SINGLE SOURCE OF TRUTH for product teams
-│   ├── qtest.service.js              ← qTest API: pagination, trace matrix parser
-│   └── server.js                     ← Express: serves frontend + API proxy routes
-├── package.json                      ← npm install / npm start
-├── README.md
-└── test-factory-webapp.html          ← Standalone copy of public/index.html
+│   │   ├── teams.config.js       ← Product teams (numeric IDs: 1, 2, 3, 4)
+│   │   ├── maturity.config.js    ← Dimensions, maturity levels, questions
+│   │   └── roadmap.config.js     ← Improvement actions per dimension
+│   ├── data/
+│   │   └── assessments.db        ← SQLite database (auto-created on first run)
+│   ├── server.js                 ← Express: serves frontend + API routes
+│   ├── qtest.service.js          ← qTest API: axios + parallel pagination
+│   └── assessments.service.js    ← SQLite-backed assessment storage
+└── package.json
 ```
 
-## Teams Configuration
+## Assessment Storage: SQLite
 
-All product team metadata lives in **`server/config/teams.config.js`** — the single source of
-truth. The frontend fetches it via `GET /api/teams` on startup. To add/remove/edit a team,
-edit only this file.
+Why SQLite (`better-sqlite3`):
 
-```javascript
-const PRODUCT_TEAMS = [
-  {
-    id: 'order-mgmt',
-    name: 'Order Management',
-    description: 'Core order processing & fulfilment',
-    techLead: 'Alice Chen',
-    sonarUrl: '...',
-    adoUrl: '...',
-    snowUrl: '...',
-    qTestProjectId: 101,
-  },
-  // ...
-];
+- **Persistence**: Data survives server restarts (previously in-memory only).
+- **Concurrent-safe**: Multiple users completing assessments at the same time work correctly.
+- **Synchronous + fast**: Microsecond queries, no async callbacks.
+- **Queryable**: SQL for "latest per team", "by date range", indexed lookups.
+- **Zero ops**: One file (`server/data/assessments.db`). Backup = copy the file.
+- **Schema-flexible**: Result stored as JSON in `result_json` column; indexed columns
+  for `team_id`, `assessed_at`, `level` allow fast filtering without rigid schema.
+
+Schema:
+```sql
+CREATE TABLE assessments (
+  id          TEXT PRIMARY KEY,
+  team_id     INTEGER NOT NULL,
+  team_name   TEXT NOT NULL,
+  assessed_by TEXT NOT NULL,
+  assessed_at TEXT NOT NULL,
+  overall     REAL NOT NULL,
+  level       TEXT NOT NULL,
+  result_json TEXT NOT NULL
+);
 ```
 
-Going forward, any new fields (SLOs, on-call rotation, Confluence space, etc.) are added only here.
+## Retake Assessment
 
-## qTest Integration
-
-### Test Executions Widget
-
-**Endpoint**: `GET /api/qtest/executions/:projectId`
-
-**What it does**:
-1. Calls qTest's `test-runs` endpoint with pagination (`page=N&pageSize=999`), looping until a page returns fewer than 999 items (generic pagination — doesn't rely on `total` field)
-2. Filters test runs to the last 31 days via `last_modified_date`
-3. For each run, parses the `properties[]` array to find `field_name === "Target Release/Build"` (release name) and `field_name === "Status"` (Passed/Failed/Blocked/Incomplete/Unexecuted)
-4. Groups by release name and tallies statuses
-
-**Response**:
-```json
-{
-  "portalUrl": "https://your.qtestnet.com/p/101/portal/project#tab=testexecution",
-  "releases": [
-    { "releaseName": "Release 3.2", "passed": 198, "failed": 12,
-      "blocked": 5, "incomplete": 3, "unexecuted": 30, "total": 248 }
-  ]
-}
-```
-
-### Requirements Coverage Widget
-
-**Endpoint**: `GET /api/qtest/requirements-coverage/:projectId`
-
-**What it does**:
-1. Calls qTest's `requirements/trace-matrix-report` endpoint with pagination (`page=N&size=999`)
-2. At the root level, finds the entry whose `name` contains **"Traceability Matrix"**
-3. If no such entry exists → returns `{ found: false }` (frontend shows "Found no Traceability Matrix Folder at the root of Requirements")
-4. Recursively walks `requirements[]` and `children[]` — each requirement with `linked-testcases > 0` counts as covered, otherwise uncovered
-5. Sums totals and computes coverage percentage
-
-**Response**:
-```json
-{
-  "found": true,
-  "totalRequirements": 62,
-  "coveredRequirements": 48,
-  "uncoveredRequirements": 14,
-  "totalTestsCovering": 312,
-  "coveragePercentage": 77.4
-}
-```
-
-### Generic Pagination Helper
-
-The `fetchAllPages()` helper in `server/qtest.service.js` is endpoint-agnostic:
-it loops calling pages until one returns fewer items than `pageSize`, then stops.
-This works for any paginated qTest endpoint regardless of whether the response
-includes a `total` field. Reuse this helper for future endpoints.
+When "Retake Assessment" is clicked, the wizard calls
+`GET /api/assessments/latest/:teamId` and pre-fills the `answers` object.
+Each question's radio button reads `answers[q.id]` to determine if it's checked,
+so previously selected options appear pre-selected.
 
 ## Configuration Reference
-
-Edit `server/config.js` or use environment variables:
 
 | Config              | Env Variable         | Default                          |
 |---------------------|----------------------|----------------------------------|
@@ -131,13 +92,3 @@ Edit `server/config.js` or use environment variables:
 | `qtest.bearerToken` | `QTEST_BEARER_TOKEN` | `REPLACE_WITH_YOUR_BEARER_TOKEN` |
 | `port`              | `PORT`               | `3000`                           |
 | `cors.origin`       | `CORS_ORIGIN`        | `http://localhost:4200`          |
-
-## Status Colours
-
-| Status      | Colour      | Hex       |
-|-------------|-------------|-----------|
-| Passed      | Green       | `#10B981` |
-| Failed      | Red         | `#EF4444` |
-| Blocked     | Dark Orange | `#D4890B` |
-| Incomplete  | Yellow      | `#F59E0B` |
-| Unexecuted  | Silver      | `#D9D9D9` |
