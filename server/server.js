@@ -10,7 +10,7 @@ const qtestService = require('./qtest.service');
 const assessmentsService = require('./assessments.service');
 const { PRODUCT_TEAMS } = require('./config/teams.config');
 const { DIMENSIONS, MATURITY_LEVELS, QUESTIONS } = require('./config/maturity.config');
-const { ROADMAP_ACTIONS } = require('./config/roadmap.config');
+const { ROADMAP_PHASES } = require('./config/roadmap.config');
 
 const app = express();
 
@@ -37,7 +37,7 @@ app.get('/api/maturity-config', (req, res) => {
 });
 
 app.get('/api/roadmap-config', (req, res) => {
-  res.json({ actions: ROADMAP_ACTIONS });
+  res.json({ phases: ROADMAP_PHASES });
 });
 
 // ════════════════════════════════════════════════════════════════

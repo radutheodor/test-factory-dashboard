@@ -1,66 +1,273 @@
 // ════════════════════════════════════════════════════════════════
-// Roadmap Actions Library
+// Roadmap Configuration — Four Progressive Phases
 // ════════════════════════════════════════════════════════════════
-// Actions per dimension, filtered at runtime by maxScore.
+// Each phase contains actions with:
+//   dim    — dimension id (testing | performance | observability | production)
+//   title  — short action title
+//   desc   — implementation guidance
+//   tags   — additional labels shown alongside the dimension tag
 // - Backend: require()
-// - Frontend: GET /api/roadmap-config
+// - Frontend: GET /api/roadmap-config → { phases }
 // ════════════════════════════════════════════════════════════════
 
-const ROADMAP_ACTIONS = {
-  strategy: [
-    { maxScore:1, title:'Create a formal test strategy document', desc:'Define test types, scope, tools, environments, and risk approach. Align with product architecture.', effort:'1–2 weeks', tags:['Foundation','Documentation'] },
-    { maxScore:2, title:'Integrate testing into Definition of Done', desc:'Add specific test criteria (unit tests, code review, CI green) to the team DoD and enforce in sprint reviews.', effort:'1 sprint', tags:['Process','Quick Win'] },
-    { maxScore:3, title:'Implement risk-based test prioritisation', desc:'Create a risk matrix mapping business impact × likelihood of failure. Use it to prioritise regression tests.', effort:'2–3 weeks', tags:['Strategy','Risk'] },
-    { maxScore:4, title:'Automate risk scoring from code changes', desc:'Use code change metrics (files changed, complexity delta) to auto-score risk and adjust test selection.', effort:'1–2 months', tags:['Advanced','Automation'] },
-  ],
-  unit: [
-    { maxScore:1, title:'Establish unit testing practice', desc:'Set up a test framework (JUnit/Jest/pytest), write tests for new code, target 20% coverage as first milestone.', effort:'1–2 weeks', tags:['Foundation','Quick Win'] },
-    { maxScore:2, title:'Integrate unit tests into CI pipeline', desc:'Configure CI to run unit tests on every PR. Make failures block merge.', effort:'1–2 days', tags:['CI/CD','Quick Win'] },
-    { maxScore:3, title:'Set up coverage gating in CI', desc:'Configure SonarQube quality gate with minimum coverage threshold (start at 40%, increase over time).', effort:'1–2 days', tags:['Quality Gate','Quick Win'] },
-    { maxScore:4, title:'Add mutation testing and trend analysis', desc:'Integrate mutation testing (Stryker/PITest) to validate test quality beyond line coverage.', effort:'2–4 weeks', tags:['Advanced','Quality'] },
-  ],
-  integration: [
-    { maxScore:1, title:'Write integration tests for critical API paths', desc:'Identify top 5 most critical service interactions and write automated tests for happy path + error cases.', effort:'1–2 weeks', tags:['Foundation','API'] },
-    { maxScore:2, title:'Implement contract testing with Pact', desc:'Set up Pact consumer tests for your API consumers. Publish contracts to a Pact Broker.', effort:'2–3 weeks', tags:['Contract Testing','Pact'] },
-    { maxScore:3, title:'Add provider verification and can-i-deploy', desc:'Configure provider-side verification in CI. Use can-i-deploy before promotions to TEST/UAT.', effort:'1–2 weeks', tags:['Contract Testing','Safety'] },
-    { maxScore:4, title:'Enable ephemeral test environments per PR', desc:'Use Kubernetes namespaces to spin up isolated environments with real dependencies for each PR.', effort:'1–2 months', tags:['Advanced','Infrastructure'] },
-  ],
-  functional: [
-    { maxScore:1, title:'Automate top 10 critical user journeys', desc:'Identify the most important E2E flows and automate them using Playwright/Cypress/Selenium.', effort:'2–4 weeks', tags:['Automation','E2E'] },
-    { maxScore:2, title:'Set up test management in qTest', desc:'Migrate test cases to qTest. Link to Jira requirements for traceability.', effort:'2–3 weeks', tags:['Process','Traceability'] },
-    { maxScore:3, title:'Achieve full requirement → test → defect traceability', desc:'Ensure every requirement has linked test cases and every test failure generates a tracked defect.', effort:'1 sprint', tags:['Quality','Process'] },
-    { maxScore:4, title:'Automate CI → qTest result sync', desc:'Push CI test results automatically to qTest. Generate real-time coverage and execution dashboards.', effort:'2–4 weeks', tags:['Integration','Reporting'] },
-  ],
-  automation: [
-    { maxScore:1, title:'Set up a test automation framework', desc:'Choose and set up a framework (Playwright, RestAssured, etc.). Establish page object pattern and shared helpers.', effort:'1–2 weeks', tags:['Foundation','Framework'] },
-    { maxScore:2, title:'Automate 50% of regression tests', desc:'Focus on stable, high-value tests first. Track automation progress weekly.', effort:'1–2 months', tags:['Automation','Regression'] },
-    { maxScore:3, title:'Integrate automation across CI + CD + CT', desc:'Run unit/contract in CI, smoke in CD (Tekton), regression in CT (ADO+Tekton).', effort:'2–4 weeks', tags:['Pipeline','Integration'] },
-    { maxScore:4, title:'Add self-healing and AI-optimised execution', desc:'Implement smart selectors, test deduplication, and optimal execution ordering.', effort:'2–3 months', tags:['Advanced','AI'] },
-  ],
-  performance: [
-    { maxScore:1, title:'Run a baseline performance test', desc:'Use k6 or Gatling to establish baseline response times and throughput for critical APIs.', effort:'1 week', tags:['Foundation','Baseline'] },
-    { maxScore:2, title:'Integrate SAST + dependency scanning in CI', desc:'Add SonarQube security rules + Snyk/OWASP dependency check to the CI pipeline.', effort:'1–2 days', tags:['Security','Quick Win'] },
-    { maxScore:3, title:'Automate performance regression detection', desc:'Set performance budgets. Fail CI if response times regress beyond thresholds.', effort:'2–3 weeks', tags:['Performance','CI/CD'] },
-    { maxScore:4, title:'Add DAST + container scanning', desc:'Integrate ZAP DAST scans and container image scanning into the pipeline.', effort:'2–4 weeks', tags:['Security','Advanced'] },
-  ],
-  environments: [
-    { maxScore:1, title:'Provision dedicated TEST and UAT environments', desc:'Create separate environments per stage. Document access and configuration.', effort:'1–2 weeks', tags:['Infrastructure','Foundation'] },
-    { maxScore:2, title:'Adopt Infrastructure-as-Code for environments', desc:'Manage all test environments via Terraform/Ansible. Enable reproducible provisioning.', effort:'2–4 weeks', tags:['IaC','Automation'] },
-    { maxScore:3, title:'Implement synthetic test data generators', desc:'Replace production data copies with deterministic, synthetic test data factories.', effort:'2–4 weeks', tags:['Test Data','Quality'] },
-    { maxScore:4, title:'Enable on-demand ephemeral environments', desc:'Self-service environment creation via K8s namespaces with automated teardown.', effort:'1–2 months', tags:['Advanced','Self-Service'] },
-  ],
-  reporting: [
-    { maxScore:1, title:'Set up Allure reporting for test results', desc:'Integrate Allure report generation into CI. Publish as pipeline artifact.', effort:'1–2 days', tags:['Reporting','Quick Win'] },
-    { maxScore:2, title:'Track defect metrics and escape rate', desc:'Define and measure: defect density, escape rate, MTTD, and root cause categories.', effort:'1–2 weeks', tags:['Metrics','Process'] },
-    { maxScore:3, title:'Build a centralised quality dashboard', desc:'Aggregate data from CI, SonarQube, qTest, and ServiceNow into one dashboard.', effort:'2–4 weeks', tags:['Dashboard','Integration'] },
-    { maxScore:4, title:'Add predictive quality analytics', desc:'Use historical data to predict defect-prone areas and optimise test allocation.', effort:'2–3 months', tags:['Advanced','AI'] },
-  ],
-  observability: [
-    { maxScore:1, title:'Deploy APM and health monitoring', desc:'Set up Dynatrace/Datadog/Grafana for production metrics, logs, and basic alerting.', effort:'1–2 weeks', tags:['Monitoring','Foundation'] },
-    { maxScore:2, title:'Implement full observability stack', desc:'Correlate metrics + logs + traces. Create dashboards for service health and performance.', effort:'2–4 weeks', tags:['Observability','Infrastructure'] },
-    { maxScore:3, title:'Create production → test feedback loop', desc:'Use production error patterns to automatically generate new test cases for regression suites.', effort:'1–2 months', tags:['Feedback Loop','Advanced'] },
-    { maxScore:4, title:'Implement canary deployments + auto-rollback', desc:'Deploy with canary analysis. Automatically roll back if error rates or latency exceed thresholds.', effort:'2–3 months', tags:['Canary','Resilience'] },
-  ],
-};
+const ROADMAP_PHASES = [
+  // ────────────────────────────────────────────────────────────
+  // Phase I — Delivery Path to Production
+  // ────────────────────────────────────────────────────────────
+  {
+    id: 1,
+    name: 'Phase I — Delivery Path to Production',
+    timeline: '3–6 months',
+    color: '#002C4B',
+    actions: [
+      {
+        dim: 'testing',
+        title: 'Write a formal test strategy',
+        desc: 'Define the testing approach, scope, tools, environments, and coverage targets. Align with the product architecture and SDLC.',
+        tags: ['Foundation', 'Documentation'],
+      },
+      {
+        dim: 'testing',
+        title: 'Integrate testing into the Definition of Done',
+        desc: 'Add explicit test criteria (unit tests pass, code reviewed, CI green) to the team DoD and enforce in sprint reviews.',
+        tags: ['Process', 'Quick Win'],
+      },
+      {
+        dim: 'testing',
+        title: 'Establish unit testing with CI gating',
+        desc: 'Set up a test framework (JUnit / Jest / pytest), target ≥ 40% coverage, run tests on every PR and block merge on failure.',
+        tags: ['Unit Testing', 'CI/CD'],
+      },
+      {
+        dim: 'testing',
+        title: 'Automate integration tests for critical paths',
+        desc: 'Identify and automate tests for your top 5 most critical service interactions, covering happy path and key error cases.',
+        tags: ['Integration', 'API'],
+      },
+      {
+        dim: 'testing',
+        title: 'Migrate test cases to a test management tool',
+        desc: 'Move test cases from spreadsheets / wikis to qTest (or equivalent). Link cases to Jira requirements for traceability.',
+        tags: ['Test Management', 'Process'],
+      },
+      {
+        dim: 'performance',
+        title: 'Establish baseline performance tests',
+        desc: 'Use k6 or Gatling to measure baseline response times and throughput for critical APIs. Document the baseline for future regression comparison.',
+        tags: ['Baseline', 'Foundation'],
+      },
+      {
+        dim: 'observability',
+        title: 'Deploy APM and basic health monitoring',
+        desc: 'Set up Dynatrace, Datadog, or Grafana for production metrics, log aggregation, and basic alerting on errors and latency.',
+        tags: ['Monitoring', 'Foundation'],
+      },
+      {
+        dim: 'production',
+        title: 'Provision dedicated TEST and UAT environments',
+        desc: 'Ensure separate, consistently available environments for each pipeline stage. Document access, reset procedures, and configuration.',
+        tags: ['Environments', 'Foundation'],
+      },
+      {
+        dim: 'production',
+        title: 'Implement full CI → CD → CT pipeline integration',
+        desc: 'Wire unit / contract tests in CI, smoke and health checks in CD (post-deploy), and regression suites in CT (TEST / UAT).',
+        tags: ['CI/CD', 'Pipeline'],
+      },
+    ],
+  },
 
-module.exports = { ROADMAP_ACTIONS };
+  // ────────────────────────────────────────────────────────────
+  // Phase II — Full Automation
+  // ────────────────────────────────────────────────────────────
+  {
+    id: 2,
+    name: 'Phase II — Full Automation',
+    timeline: '6–12 months',
+    color: '#33566F',
+    actions: [
+      {
+        dim: 'testing',
+        title: 'Gate code coverage in CI (SonarQube)',
+        desc: 'Configure a SonarQube quality gate with a minimum coverage threshold (start at 40%, increase quarterly). Block merges that regress below it.',
+        tags: ['Coverage', 'CI/CD'],
+      },
+      {
+        dim: 'testing',
+        title: 'Implement contract testing with Pact',
+        desc: 'Set up Pact consumer tests for your API consumers. Publish contracts to a Pact Broker and verify on the provider side in CI.',
+        tags: ['Contract Testing', 'API'],
+      },
+      {
+        dim: 'testing',
+        title: 'Automate ≥ 50% of the regression scope',
+        desc: 'Build and stabilise an automated regression suite (Playwright, RestAssured, etc.) covering critical user journeys and API flows.',
+        tags: ['Automation', 'Regression'],
+      },
+      {
+        dim: 'testing',
+        title: 'Automate E2E tests for critical user journeys',
+        desc: 'Identify the top 10 most important end-to-end flows and automate them using Playwright or Cypress with the Page Object pattern.',
+        tags: ['E2E', 'Automation'],
+      },
+      {
+        dim: 'testing',
+        title: 'Integrate SAST and dependency scanning in CI',
+        desc: 'Add SonarQube security rules plus Snyk or OWASP Dependency Check to the CI pipeline. Fail builds on critical vulnerabilities.',
+        tags: ['Security', 'CI/CD'],
+      },
+      {
+        dim: 'performance',
+        title: 'Run performance tests regularly',
+        desc: 'Schedule regular load, stress, and endurance tests. Automate suite execution on a nightly or per-release cadence.',
+        tags: ['Load Testing', 'Automation'],
+      },
+      {
+        dim: 'observability',
+        title: 'Implement full observability stack',
+        desc: 'Correlate metrics, logs, and traces across services. Create dashboards for service health, latency percentiles, and error budgets.',
+        tags: ['Observability', 'Tracing'],
+      },
+      {
+        dim: 'observability',
+        title: 'Build a centralised quality dashboard',
+        desc: 'Aggregate data from CI (test results), SonarQube (coverage / bugs), and qTest (execution trends) into a single quality view.',
+        tags: ['Dashboard', 'Reporting'],
+      },
+      {
+        dim: 'production',
+        title: 'Adopt Infrastructure-as-Code for environments',
+        desc: 'Manage all test environments via Terraform or Ansible. Enable reproducible, version-controlled provisioning.',
+        tags: ['IaC', 'Environments'],
+      },
+      {
+        dim: 'production',
+        title: 'Replace production data with synthetic generators',
+        desc: 'Implement deterministic test data factories. Stop using copies of production data in TEST / UAT to eliminate data privacy risk.',
+        tags: ['Test Data', 'Security'],
+      },
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────
+  // Phase III — Risk Based Testing
+  // ────────────────────────────────────────────────────────────
+  {
+    id: 3,
+    name: 'Phase III — Risk Based Testing',
+    timeline: '12 months',
+    color: '#8E654C',
+    actions: [
+      {
+        dim: 'testing',
+        title: 'Implement risk-based test prioritisation',
+        desc: 'Create a risk matrix mapping business impact × likelihood of failure. Use it to drive test selection and regression prioritisation each release.',
+        tags: ['Risk', 'Strategy'],
+      },
+      {
+        dim: 'testing',
+        title: 'Enable Pact can-i-deploy in the CD pipeline',
+        desc: 'Use can-i-deploy before every promotion to TEST or UAT to ensure no consumer-provider contract is broken.',
+        tags: ['Contract Testing', 'Safety'],
+      },
+      {
+        dim: 'testing',
+        title: 'Achieve full requirement → test → defect traceability',
+        desc: 'Ensure every requirement has linked test cases in qTest and every test failure creates a tracked Jira defect with root cause analysis.',
+        tags: ['Traceability', 'Quality'],
+      },
+      {
+        dim: 'performance',
+        title: 'Gate performance regression in CI/CD',
+        desc: 'Define performance budgets (p95 latency, throughput). Automatically fail builds when response times regress beyond thresholds.',
+        tags: ['Performance Budgets', 'CI/CD'],
+      },
+      {
+        dim: 'performance',
+        title: 'Integrate DAST and container scanning',
+        desc: 'Add OWASP ZAP DAST scans and container image scanning (Trivy, Anchore) into the pipeline alongside existing SAST.',
+        tags: ['Security', 'DAST'],
+      },
+      {
+        dim: 'observability',
+        title: 'Track defect metrics and escape rate',
+        desc: 'Define and regularly review: defect density, escape rate, mean time to detect (MTTD), and root cause categories per team.',
+        tags: ['Metrics', 'Defects'],
+      },
+      {
+        dim: 'observability',
+        title: 'Implement synthetic monitoring in production',
+        desc: 'Deploy automated synthetic user journeys that run on a schedule and alert when critical flows fail in production.',
+        tags: ['Synthetic Monitoring', 'Production'],
+      },
+      {
+        dim: 'production',
+        title: 'Enable on-demand ephemeral environments',
+        desc: 'Provision isolated Kubernetes namespaces per PR or branch with real dependencies. Tear down automatically after merge.',
+        tags: ['Ephemeral Envs', 'Kubernetes'],
+      },
+      {
+        dim: 'production',
+        title: 'Automate CI → qTest result sync',
+        desc: 'Push CI and CD pipeline test results automatically into qTest. Generate real-time coverage and execution dashboards per release.',
+        tags: ['Integration', 'Test Management'],
+      },
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────
+  // Phase IV — AI-driven
+  // ────────────────────────────────────────────────────────────
+  {
+    id: 4,
+    name: 'Phase IV — AI-driven',
+    timeline: '1–2 years',
+    color: '#8B5CF6',
+    actions: [
+      {
+        dim: 'testing',
+        title: 'Add mutation testing and trend analysis',
+        desc: 'Integrate mutation testing (Stryker, PITest) to validate test suite quality beyond line coverage. Track mutation scores over time.',
+        tags: ['Mutation Testing', 'Quality'],
+      },
+      {
+        dim: 'testing',
+        title: 'Implement self-healing and AI-optimised test execution',
+        desc: 'Use smart selectors, AI-based test deduplication, and optimal ordering to reduce suite runtime and eliminate flakiness.',
+        tags: ['AI', 'Self-Healing'],
+      },
+      {
+        dim: 'performance',
+        title: 'Implement continuous performance monitoring with anomaly detection',
+        desc: 'Move from scheduled performance tests to always-on monitoring with ML-based anomaly detection and automated incident alerting.',
+        tags: ['AI', 'Continuous'],
+      },
+      {
+        dim: 'observability',
+        title: 'Create a production → test feedback loop',
+        desc: 'Use production error patterns and user session data to automatically generate and prioritise new regression test cases.',
+        tags: ['AI', 'Feedback Loop'],
+      },
+      {
+        dim: 'observability',
+        title: 'Add predictive quality analytics',
+        desc: 'Use historical defect and coverage data to predict defect-prone areas per release and automatically adjust test allocation.',
+        tags: ['ML', 'Predictive'],
+      },
+      {
+        dim: 'production',
+        title: 'Implement canary deployments with auto-rollback',
+        desc: 'Deploy with canary analysis using automated performance and error rate thresholds. Roll back instantly when quality gates are breached.',
+        tags: ['Canary', 'Resilience'],
+      },
+      {
+        dim: 'production',
+        title: 'Enable chaos engineering and full synthetic validation',
+        desc: 'Combine synthetic user journeys, canary analysis, and chaos engineering to continuously validate production resilience and recoverability.',
+        tags: ['Chaos Engineering', 'Resilience'],
+      },
+    ],
+  },
+];
+
+module.exports = { ROADMAP_PHASES };

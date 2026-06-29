@@ -193,7 +193,8 @@ select.form-control { cursor: pointer; appearance: auto; }
   border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
   transition: border-color 0.2s;
 }
-.question-card.answered { border-left: 3px solid var(--success); }
+.question-card.answered { border-left: 3px solid var(--navy); }
+.question-card:hover { border-color: var(--slate); }
 .question-text { font-size: 15px; font-weight: 600; color: var(--navy); margin-bottom: 6px; }
 .question-explanation { font-size: 13px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5; }
 .option-list { display: flex; flex-direction: column; gap: 6px; }

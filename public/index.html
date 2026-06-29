@@ -289,7 +289,7 @@ let storedResults = [];
 let DIMENSIONS = [];
 let MATURITY_LEVELS = [];
 let QUESTIONS = [];
-let ROADMAP_ACTIONS = {};
+let ROADMAP_PHASES = [];
 
 async function loadMaturityConfig() {
   const res = await fetch(`${API_BASE_URL}/api/maturity-config`);
@@ -304,7 +304,7 @@ async function loadRoadmapConfig() {
   const res = await fetch(`${API_BASE_URL}/api/roadmap-config`);
   if (!res.ok) throw new Error(`Failed to load roadmap config (${res.status})`);
   const data = await res.json();
-  ROADMAP_ACTIONS = data.actions;
+  ROADMAP_PHASES = data.phases;
 }
 
 async function loadAssessments() {
@@ -419,17 +419,12 @@ function renderWizardStep() {
       </div>
     </div>
     ${qs.map(q => `
-      <div class="question-card ${answers[q.id] !== undefined ? 'answered' : ''}" id="qcard-${q.id}">
-        <div class="question-text">${q.text}</div>
-        <div class="question-explanation">${q.explanation}</div>
-        <div class="option-list">
-          ${q.options.map(o => `
-            <div class="option-item ${answers[q.id] === o.s ? 'selected' : ''}" onclick="selectOption('${q.id}', ${o.s}, '${dim.id}')">
-              <div class="option-radio"></div>
-              <span>${o.l}</span>
-              <span class="option-score">${o.s}/5</span>
-            </div>
-          `).join('')}
+      <div class="question-card ${answers[q.id] ? 'answered' : ''}" id="qcard-${q.id}" onclick="toggleCheck('${q.id}')" style="cursor:pointer;user-select:none">
+        <div class="option-item ${answers[q.id] ? 'selected' : ''}" style="pointer-events:none">
+          <div class="option-radio" style="border-radius:4px;flex-shrink:0${answers[q.id] ? ';background:var(--navy);border-color:var(--navy)' : ''}">
+            ${answers[q.id] ? '<span class="material-icons-outlined" style="font-size:13px;color:#fff;display:block;text-align:center;line-height:16px">check</span>' : ''}
+          </div>
+          <span style="font-size:14px;font-weight:500;color:var(--navy)">${q.text}</span>
         </div>
       </div>
     `).join('')}
@@ -445,9 +440,8 @@ function renderWizardStep() {
   renderWizardProgress();
 }
 
-function selectOption(qId, score, dimId) {
-  answers[qId] = score;
-  // Re-render to show selection
+function toggleCheck(qId) {
+  answers[qId] = !answers[qId];
   renderWizardStep();
 }
 
@@ -456,14 +450,6 @@ function wizardPrev() {
 }
 
 function wizardNext() {
-  // Check all questions on this step are answered
-  const dim = DIMENSIONS[currentStep];
-  const qs = QUESTIONS.filter(q => q.dim === dim.id);
-  const unanswered = qs.filter(q => answers[q.id] === undefined);
-  if (unanswered.length > 0) {
-    alert(`Please answer all ${qs.length} questions in "${dim.name}" before proceeding.`);
-    return;
-  }
   if (currentStep < DIMENSIONS.length - 1) {
     currentStep++;
     renderWizardStep();
@@ -474,12 +460,14 @@ function wizardNext() {
 }
 
 function calculateAndShowResult() {
-  // Calculate dimension scores
+  // Calculate dimension scores (binary: checked = practice in place)
   const dimScores = DIMENSIONS.map(dim => {
     const qs = QUESTIONS.filter(q => q.dim === dim.id);
-    const raw = qs.reduce((sum, q) => sum + (answers[q.id] || 0), 0) / qs.length;
+    const checkedCount = qs.filter(q => answers[q.id]).length;
+    const raw = qs.length > 0 ? Math.round((checkedCount / qs.length) * 5 * 100) / 100 : 0;
     const weighted = raw * (dim.weight / 100);
-    return { id: dim.id, name: dim.name, raw: Math.round(raw * 100) / 100, weighted: Math.round(weighted * 1000) / 1000, pct: Math.round((raw / 5) * 100), color: dim.color, weight: dim.weight };
+    const pct = qs.length > 0 ? Math.round((checkedCount / qs.length) * 100) : 0;
+    return { id: dim.id, name: dim.name, raw, weighted: Math.round(weighted * 1000) / 1000, pct, color: dim.color, weight: dim.weight, checkedCount, totalCount: qs.length };
   });
 
   const overall = Math.round(dimScores.reduce((s, d) => s + d.weighted, 0) * 100) / 100;
@@ -511,58 +499,38 @@ function calculateAndShowResult() {
 function renderResult(r, fromHistory) {
   const el = document.getElementById('assessment-result');
 
-  // Generate roadmap: find weakest dimensions, pick relevant actions
-  const sortedDims = [...r.dimScores].sort((a, b) => a.raw - b.raw);
   const nextLevel = MATURITY_LEVELS.find(l => r.overall < l.maxScore && r.overall >= l.minScore);
   const targetLevel = MATURITY_LEVELS[MATURITY_LEVELS.indexOf(nextLevel) + 1] || nextLevel;
 
-  // Build phased roadmap
-  const phases = [
-    { name:'Quick Wins', timeline:'Weeks 1–2', color:'var(--success)', actions:[] },
-    { name:'Short Term', timeline:'Weeks 3–6', color:'var(--info)', actions:[] },
-    { name:'Medium Term', timeline:'Months 2–3', color:'var(--brown)', actions:[] },
-    { name:'Long Term',  timeline:'Months 4–6', color:'var(--slate)', actions:[] },
-  ];
+  // Build phase-based roadmap from config
+  const dimMap = {};
+  DIMENSIONS.forEach(d => { dimMap[d.id] = d; });
 
-  // For each dimension, pick the next applicable action(s)
-  sortedDims.forEach(dim => {
-    const dimActions = ROADMAP_ACTIONS[dim.id] || [];
-    dimActions.forEach(a => {
-      if (dim.raw <= a.maxScore) {
-        const effort = a.effort.toLowerCase();
-        let phase = 0;
-        if (effort.includes('day') || effort.includes('1 sprint') || effort.includes('1–2 week')) phase = 0;
-        else if (effort.includes('2–3 week') || effort.includes('2–4 week') || effort.includes('1–2 month')) phase = 1;
-        else if (effort.includes('month')) phase = 2;
-        if (effort.includes('3 month') || effort.includes('4') || effort.includes('advanced')) phase = 3;
-        phases[phase].actions.push({ ...a, dimName: dim.name, dimColor: dim.color, dimScore: dim.raw });
-      }
-    });
-  });
-
-  const roadmapHTML = phases.filter(p => p.actions.length > 0).map((phase, i) => `
+  const roadmapHTML = ROADMAP_PHASES.map(phase => `
     <div class="roadmap-phase">
-      <div class="roadmap-phase-dot" style="background:${phase.color}">${i + 1}</div>
+      <div class="roadmap-phase-dot" style="background:${phase.color}">${phase.id}</div>
       <div class="roadmap-phase-header">
         <span class="roadmap-phase-title">${phase.name}</span>
         <span class="roadmap-phase-timeline">${phase.timeline}</span>
       </div>
-      ${phase.actions.slice(0, 5).map(a => `
-        <div class="roadmap-action" style="border-left-color:${a.dimColor}">
-          <div class="roadmap-action-icon" style="background:${a.dimColor}">
-            <span class="material-icons-outlined" style="font-size:14px">build</span>
-          </div>
-          <div class="roadmap-action-content">
-            <div class="roadmap-action-title">${a.title}</div>
-            <div class="roadmap-action-desc">${a.desc}</div>
-            <div class="roadmap-action-tags">
-              <span class="roadmap-tag" style="background:${a.dimColor}18;color:${a.dimColor}">${a.dimName}</span>
-              <span class="roadmap-tag" style="background:var(--cream);color:var(--taupe)">${a.effort}</span>
-              ${a.tags.map(t => `<span class="roadmap-tag" style="background:#EFF6FF;color:#1E40AF">${t}</span>`).join('')}
+      ${phase.actions.map(a => {
+        const dimCfg = dimMap[a.dim] || { color: '#888', name: a.dim };
+        return `
+          <div class="roadmap-action" style="border-left-color:${dimCfg.color}">
+            <div class="roadmap-action-icon" style="background:${dimCfg.color}">
+              <span class="material-icons-outlined" style="font-size:14px">build</span>
+            </div>
+            <div class="roadmap-action-content">
+              <div class="roadmap-action-title">${a.title}</div>
+              <div class="roadmap-action-desc">${a.desc}</div>
+              <div class="roadmap-action-tags">
+                <span class="roadmap-tag" style="background:${dimCfg.color}18;color:${dimCfg.color}">${dimCfg.name}</span>
+                ${a.tags.map(t => `<span class="roadmap-tag" style="background:#EFF6FF;color:#1E40AF">${t}</span>`).join('')}
+              </div>
             </div>
           </div>
-        </div>
-      `).join('')}
+        `;
+      }).join('')}
     </div>
   `).join('');
 
@@ -596,7 +564,7 @@ function renderResult(r, fromHistory) {
                   <div class="progress-fill" style="width:${d.pct}%; background:${d.color}"></div>
                 </div>
               </div>
-              <div class="dim-score" style="color:${d.color}">${d.raw}</div>
+              <div class="dim-score" style="color:${d.color};font-size:13px">${d.checkedCount !== undefined ? `${d.checkedCount}/${d.totalCount}` : d.raw}</div>
               <div class="dim-pct">${d.pct}%</div>
             </div>
           `).join('')}
@@ -616,8 +584,8 @@ function renderResult(r, fromHistory) {
             </div>
           `).join('')}
           <div style="margin-top:16px;padding:12px;background:var(--cream);border-radius:6px;font-size:12px;color:var(--text-muted)">
-            <strong>Formula:</strong> Overall = Σ (dimension_avg × weight / 100)<br>
-            <strong>Weights:</strong> ${DIMENSIONS.map(d=>`${d.name.split(' ')[0]}: ${d.weight}%`).join(', ')}
+            <strong>Formula:</strong> Overall = Σ (practices_checked / practices_total × 5 × weight / 100)<br>
+            <strong>Weights:</strong> ${DIMENSIONS.map(d=>`${d.name}: ${d.weight}%`).join(', ')}
           </div>
         </div>
       </div>
@@ -627,7 +595,7 @@ function renderResult(r, fromHistory) {
     <div class="card mt-3 roadmap-section">
       <div class="card-header">
         <span class="material-icons-outlined">route</span>
-        <h3>Improvement Roadmap: Path to "${targetLevel.level}"</h3>
+        <h3>Improvement Roadmap — Path to "${targetLevel.level}"</h3>
       </div>
       <div class="card-body">
         <div style="padding:12px 16px;background:linear-gradient(135deg,${r.levelColor}10,${targetLevel.color}10);border-radius:8px;margin-bottom:20px;display:flex;align-items:center;gap:16px">
@@ -645,7 +613,7 @@ function renderResult(r, fromHistory) {
           </div>
         </div>
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">
-          Based on your weakest dimensions, here are prioritised actions to improve your maturity score. Focus on <strong>Quick Wins</strong> first for maximum ROI.
+          Follow these four progressive objectives to evolve your testing maturity. Complete each phase in sequence for maximum impact.
         </div>
         ${roadmapHTML}
       </div>
@@ -1214,8 +1182,8 @@ function renderHistory() {
                   <td style="padding:10px 12px;color:var(--text-muted)">${new Date(r.date).toLocaleString()}</td>
                   <td style="padding:10px 12px;text-align:center;font-weight:700;font-family:Georgia,serif;font-size:18px;color:${r.levelColor}">${r.overall}</td>
                   <td style="padding:10px 12px"><span class="badge" style="background:${r.levelColor}20;color:${r.levelColor}">${r.level}</span></td>
-                  <td style="padding:10px 12px;font-size:12px"><span style="color:var(--success);font-weight:600">${top.raw}/5</span> ${top.name}</td>
-                  <td style="padding:10px 12px;font-size:12px"><span style="color:var(--danger);font-weight:600">${weak.raw}/5</span> ${weak.name}</td>
+                  <td style="padding:10px 12px;font-size:12px"><span style="color:var(--success);font-weight:600">${top.checkedCount !== undefined ? top.checkedCount + '/' + top.totalCount : top.raw + '/5'}</span> ${top.name}</td>
+                  <td style="padding:10px 12px;font-size:12px"><span style="color:var(--danger);font-weight:600">${weak.checkedCount !== undefined ? weak.checkedCount + '/' + weak.totalCount : weak.raw + '/5'}</span> ${weak.name}</td>
                   <td style="padding:10px 12px;text-align:right" onclick="event.stopPropagation()">
                     <button class="btn btn-secondary" style="padding:4px 10px;color:var(--danger);border-color:var(--danger)" onclick="deleteAssessment('${r.id}')">
                       <span class="material-icons-outlined" style="font-size:15px;vertical-align:middle">delete</span>
