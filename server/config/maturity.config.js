@@ -2,6 +2,9 @@
 // Maturity Framework Configuration
 // ════════════════════════════════════════════════════════════════
 // 4 dimensions (25% each), binary checkbox questions.
+// Every roadmap action in roadmap.config.js maps to exactly one
+// question here via questionId. Not all questions need a roadmap
+// action, but every roadmap action must have one.
 // - Backend: require()
 // - Frontend: GET /api/maturity-config
 // ════════════════════════════════════════════════════════════════
@@ -22,6 +25,7 @@ const MATURITY_LEVELS = [
 ];
 
 // ── QUESTIONS (binary checkboxes — checked = practice in place) ──
+// IDs are stable and used as keys in roadmap.config.js (questionId).
 const QUESTIONS = [
   // ── Testing (includes security) ──
   { id: 't1',  dim: 'testing',       text: 'A formal test strategy document exists and is actively maintained' },
@@ -36,12 +40,16 @@ const QUESTIONS = [
   { id: 't10', dim: 'testing',       text: 'Test cases are managed in a test management tool (e.g. qTest), linked to requirements' },
   { id: 't11', dim: 'testing',       text: 'Automated tests cover ≥ 50% of the regression scope' },
   { id: 't12', dim: 'testing',       text: 'Security scanning (SAST + dependency checks) is integrated in CI' },
+  { id: 't13', dim: 'testing',       text: 'Pact can-i-deploy gates all promotions to TEST and UAT environments' },
+  { id: 't14', dim: 'testing',       text: 'Mutation testing (e.g. Stryker, PITest) validates test suite quality beyond line coverage' },
+  { id: 't15', dim: 'testing',       text: 'Automated tests are self-healing with AI-optimised selectors and execution ordering' },
   // ── Performance ──
   { id: 'p1',  dim: 'performance',   text: 'Baseline performance tests have been established (k6, Gatling, JMeter)' },
   { id: 'p2',  dim: 'performance',   text: 'Performance tests run regularly (load, stress, endurance)' },
   { id: 'p3',  dim: 'performance',   text: 'Performance regression is automatically detected and gated in CI/CD' },
   { id: 'p4',  dim: 'performance',   text: 'Dynamic application security testing (DAST) is integrated in the pipeline' },
   { id: 'p5',  dim: 'performance',   text: 'Container / image scanning is in place' },
+  { id: 'p6',  dim: 'performance',   text: 'Continuous performance monitoring with ML-based anomaly detection is in place' },
   // ── Observability ──
   { id: 'o1',  dim: 'observability', text: 'APM / production monitoring is deployed (Dynatrace, Datadog, Grafana, etc.)' },
   { id: 'o2',  dim: 'observability', text: 'Full observability stack is in place: metrics, logs, and traces correlated' },
@@ -49,6 +57,7 @@ const QUESTIONS = [
   { id: 'o4',  dim: 'observability', text: 'Defect metrics (escape rate, MTTD, root cause) are tracked and reviewed regularly' },
   { id: 'o5',  dim: 'observability', text: 'Synthetic monitoring / smoke tests run continuously in production' },
   { id: 'o6',  dim: 'observability', text: 'Production error patterns are used to inform and generate new test cases' },
+  { id: 'o7',  dim: 'observability', text: 'Predictive quality analytics identify defect-prone areas and guide test allocation per release' },
   // ── Production ──
   { id: 'r1',  dim: 'production',    text: 'Dedicated TEST and UAT environments exist and are consistently available' },
   { id: 'r2',  dim: 'production',    text: 'Environments are managed as Infrastructure-as-Code (Terraform, Ansible, etc.)' },
@@ -56,6 +65,8 @@ const QUESTIONS = [
   { id: 'r4',  dim: 'production',    text: 'Synthetic test data generators are in place — no unmasked production data is used' },
   { id: 'r5',  dim: 'production',    text: 'A full CI → CD → CT pipeline integration exists (build, deploy, test in sequence)' },
   { id: 'r6',  dim: 'production',    text: 'Test results sync automatically to the test management tool (e.g. qTest)' },
+  { id: 'r7',  dim: 'production',    text: 'Canary deployments with automated quality gates and instant rollback are in place' },
+  { id: 'r8',  dim: 'production',    text: 'Chaos engineering practices continuously validate production resilience and recoverability' },
 ];
 
 module.exports = { DIMENSIONS, MATURITY_LEVELS, QUESTIONS };

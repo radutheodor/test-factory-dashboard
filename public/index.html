@@ -506,33 +506,43 @@ function renderResult(r, fromHistory) {
   const dimMap = {};
   DIMENSIONS.forEach(d => { dimMap[d.id] = d; });
 
-  const roadmapHTML = ROADMAP_PHASES.map(phase => `
-    <div class="roadmap-phase">
-      <div class="roadmap-phase-dot" style="background:${phase.color}">${phase.id}</div>
-      <div class="roadmap-phase-header">
-        <span class="roadmap-phase-title">${phase.name}</span>
-        <span class="roadmap-phase-timeline">${phase.timeline}</span>
-      </div>
-      ${phase.actions.map(a => {
-        const dimCfg = dimMap[a.dim] || { color: '#888', name: a.dim };
-        return `
-          <div class="roadmap-action" style="border-left-color:${dimCfg.color}">
-            <div class="roadmap-action-icon" style="background:${dimCfg.color}">
-              <span class="material-icons-outlined" style="font-size:14px">build</span>
-            </div>
-            <div class="roadmap-action-content">
-              <div class="roadmap-action-title">${a.title}</div>
-              <div class="roadmap-action-desc">${a.desc}</div>
-              <div class="roadmap-action-tags">
-                <span class="roadmap-tag" style="background:${dimCfg.color}18;color:${dimCfg.color}">${dimCfg.name}</span>
-                ${a.tags.map(t => `<span class="roadmap-tag" style="background:#EFF6FF;color:#1E40AF">${t}</span>`).join('')}
+  const roadmapHTML = ROADMAP_PHASES.map(phase => {
+    const missing = phase.actions.filter(a => !r.answers[a.questionId]);
+    const actionsHTML = missing.length === 0
+      ? `<div style="padding:10px 16px;color:var(--success);font-size:13px;font-weight:500;display:flex;align-items:center;gap:6px">
+           <span class="material-icons-outlined" style="font-size:16px">check_circle</span>
+           All practices in this phase are already in place.
+         </div>`
+      : missing.map(a => {
+          const dimCfg = dimMap[a.dim] || { color: '#888', name: a.dim };
+          return `
+            <div class="roadmap-action" style="border-left-color:${dimCfg.color}">
+              <div class="roadmap-action-icon" style="background:${dimCfg.color}">
+                <span class="material-icons-outlined" style="font-size:14px">build</span>
+              </div>
+              <div class="roadmap-action-content">
+                <div class="roadmap-action-title">${a.title}</div>
+                <div class="roadmap-action-desc">${a.desc}</div>
+                <div class="roadmap-action-tags">
+                  <span class="roadmap-tag" style="background:${dimCfg.color}18;color:${dimCfg.color}">${dimCfg.name}</span>
+                  ${a.tags.map(t => `<span class="roadmap-tag" style="background:#EFF6FF;color:#1E40AF">${t}</span>`).join('')}
+                </div>
               </div>
             </div>
-          </div>
-        `;
-      }).join('')}
-    </div>
-  `).join('');
+          `;
+        }).join('');
+    return `
+      <div class="roadmap-phase">
+        <div class="roadmap-phase-dot" style="background:${missing.length === 0 ? 'var(--success)' : phase.color}">${missing.length === 0 ? '✓' : phase.id}</div>
+        <div class="roadmap-phase-header">
+          <span class="roadmap-phase-title">${phase.name}</span>
+          <span class="roadmap-phase-timeline">${phase.timeline}</span>
+          ${missing.length === 0 ? '<span class="badge badge-success" style="font-size:10px;margin-left:8px">Complete</span>' : `<span style="font-size:11px;color:var(--text-muted);margin-left:8px">${missing.length} remaining</span>`}
+        </div>
+        ${actionsHTML}
+      </div>
+    `;
+  }).join('');
 
   const backBtn = fromHistory
     ? `<button class="btn btn-secondary" onclick="navigate('history')"><span class="material-icons-outlined" style="font-size:18px">arrow_back</span> Back to History</button>`
@@ -1023,10 +1033,17 @@ async function loadRequirementsCoverageWidget(teamId, projectId) {
   const container = document.getElementById(`reqcov-widget-${teamId}`);
   if (!container) return;
 
-  let result;
+  let result, automation = null;
   try {
-    const response = await fetch(`${API_BASE_URL}/api/qtest/requirements-coverage/${projectId}`);
-    result = await response.json();
+    const [reqResponse, autoResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/qtest/requirements-coverage/${projectId}`),
+      fetch(`${API_BASE_URL}/api/qtest/test-automation/${projectId}`).catch(() => null),
+    ]);
+    result = await reqResponse.json();
+    if (autoResponse) {
+      const autoData = await autoResponse.json();
+      if (!autoData.error) automation = autoData;
+    }
   } catch (err) {
     console.error('Backend API error (requirements coverage):', err);
     container.innerHTML = `
@@ -1067,6 +1084,10 @@ async function loadRequirementsCoverageWidget(teamId, projectId) {
   const pct = result.coveragePercentage;
   const color = pct >= 75 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)';
 
+  const autoColor = automation
+    ? (automation.automationPercentage >= 75 ? 'var(--success)' : automation.automationPercentage >= 50 ? 'var(--warning)' : 'var(--danger)')
+    : 'var(--text-muted)';
+
   container.className = 'card-body req-summary';
   container.innerHTML = `
     <div class="req-big" style="color:${color}">${pct}%</div>
@@ -1079,6 +1100,22 @@ async function loadRequirementsCoverageWidget(teamId, projectId) {
       <span style="color:var(--success)"><strong>${result.coveredRequirements}</strong> covered</span> by <strong>${result.totalTestsCovering}</strong> test cases<br>
       <span style="color:var(--danger)"><strong>${result.uncoveredRequirements}</strong> uncovered</span> requirements
     </div>
+    ${automation ? `
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Test Automation</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:28px;font-weight:700;font-family:Georgia,serif;color:${autoColor}">${automation.automationPercentage}%</div>
+          <div style="flex:1">
+            <div class="progress-bar" style="height:6px">
+              <div class="progress-fill" style="width:${automation.automationPercentage}%;background:${autoColor}"></div>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+              <span style="color:${autoColor};font-weight:600">${automation.automatedTestCases}</span> automated · <strong>${automation.totalTestCases}</strong> total test cases
+            </div>
+          </div>
+        </div>
+      </div>
+    ` : ''}
   `;
 }
 

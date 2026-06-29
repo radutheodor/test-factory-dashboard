@@ -222,6 +222,29 @@ async function getRequirementsCoverage(projectId) {
   };
 }
 
+// ────────────────────────────────────────────────────────────────
+// TEST AUTOMATION — count total test cases and how many are automated
+// A test case is automated when its "Automation" property = "Yes"
+// ────────────────────────────────────────────────────────────────
+async function getTestAutomation(projectId) {
+  const allTestCases = await fetchAllPages(
+    (page, size) => `${config.qtest.baseUrl}/api/v3/projects/${projectId}/test-cases?page=${page}&size=${size}`,
+    `test-cases (project ${projectId})`
+  );
+
+  const total = allTestCases.length;
+  const automated = allTestCases.filter(tc => {
+    const props = tc.properties || [];
+    return props.some(p => p.field_name === 'Automation' && p.field_value_name === 'Yes');
+  }).length;
+
+  const automationPercentage = total > 0 ? Math.round((automated / total) * 1000) / 10 : 0;
+
+  console.log(`[qTest] Automation for project ${projectId}: ${automated}/${total} automated (${automationPercentage}%)`);
+
+  return { totalTestCases: total, automatedTestCases: automated, automationPercentage };
+}
+
 function getPortalUrl(projectId) {
   return `${config.qtest.baseUrl}/p/${projectId}/portal/project#tab=testexecution`;
 }
@@ -229,5 +252,6 @@ function getPortalUrl(projectId) {
 module.exports = {
   getRecentTestExecutions,
   getRequirementsCoverage,
+  getTestAutomation,
   getPortalUrl,
 };

@@ -151,6 +151,27 @@ app.get('/api/qtest/requirements-coverage/:projectId', async (req, res) => {
   }
 });
 
+app.get('/api/qtest/test-automation/:projectId', async (req, res) => {
+  const { projectId } = req.params;
+  if (!isQTestConfigured()) {
+    return res.status(503).json({
+      error: 'qTest not configured',
+      details: 'Set QTEST_BASE_URL and QTEST_BEARER_TOKEN or edit server/config.js',
+      totalTestCases: 0, automatedTestCases: 0, automationPercentage: 0,
+    });
+  }
+  try {
+    const result = await qtestService.getTestAutomation(projectId);
+    res.json(result);
+  } catch (err) {
+    console.error(`[qTest] Error fetching test automation for project ${projectId}:`, err.message);
+    res.status(502).json({
+      error: 'Failed to fetch test cases from qTest', details: err.message,
+      totalTestCases: 0, automatedTestCases: 0, automationPercentage: 0,
+    });
+  }
+});
+
 // ── FUTURE ENDPOINTS (stubs) ──
 app.get('/api/servicenow/changes/:ciName', (req, res) => res.status(501).json({ error: 'Not yet implemented' }));
 app.get('/api/sonar/metrics/:projectKey',  (req, res) => res.status(501).json({ error: 'Not yet implemented' }));
